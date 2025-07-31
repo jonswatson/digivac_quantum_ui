@@ -11,120 +11,146 @@ from typing import List
 
 import pandas as pd
 import streamlit as st
-from serial.tools import list_ports
+
+try:
+    from serial.tools.list_ports import comports
+except ImportError:  # pyserial not installed yet
+    comports = lambda: []  # noqa: E731
 
 from ..controller.controller import Controller
 
+
 # --------------------------------------------------------------------------- #
-# -----------------------------  HELPER FUNCTIONS  -------------------------- #
+# ------------------------------  HELPERS  ---------------------------------- #
 # --------------------------------------------------------------------------- #
 def _discover_ports() -> List[str]:
-    """Return available serial ports, e.g. ['COM3', '/dev/ttyUSB0']."""
-    return [p.device for p in list_ports.comports()]
+    return [p.device for p in comports()]
 
 
 def _drain_queue(ctrl: Controller) -> None:
-    """
-    Pull everything that is currently queued by the Model thread and
-    append it to the session‑state DataFrame.
-    """
+    """Pull ALL queued updates into session‑level DataFrame."""
     df: pd.DataFrame = st.session_state.data
     while True:
         try:
-            update = ctrl.queue.get_nowait()  # {'pressure': …, 'temperature': …}
+            item = ctrl.queue.get_nowait()
+            if "error" in item:  # device error sent by Model
+                st.session_state.error_msg = item["error"]
+                ctrl.stop()
+                break
             df.loc[len(df)] = {
                 "timestamp": pd.Timestamp.utcnow(),
-                "pressure": update["pressure"],
-                "temperature": update["temperature"],
+                "pressure": item["pressure"],
+                "temperature": item["temperature"],
             }
         except Empty:
             break
 
 
+def _reset_data() -> None:
+    st.session_state.data = pd.DataFrame(
+        columns=["timestamp", "pressure", "temperature"]
+    )
+    st.session_state.error_msg = ""
+
+
 # --------------------------------------------------------------------------- #
-# ------------------------------  MAIN RENDER  ------------------------------ #
+# ------------------------------  MAIN UI  ---------------------------------- #
 # --------------------------------------------------------------------------- #
 def render() -> None:
     st.set_page_config(page_title="Quantum Sensor Logger", layout="wide")
     st.title("DigiVac Quantum Sensor Logger")
 
-    # -------------------------------- Session state ------------------------ #
+    # ---------- Session state bootstrapping ---------- #
     if "controller" not in st.session_state:
         st.session_state.controller = Controller()  # type: ignore
     if "data" not in st.session_state:
-        st.session_state.data = pd.DataFrame(
-            columns=["timestamp", "pressure", "temperature"]
-        )
+        _reset_data()
+    if "mode" not in st.session_state:
+        st.session_state.mode = "Simulation"
+    if "error_msg" not in st.session_state:
+        st.session_state.error_msg = ""
 
     ctrl: Controller = st.session_state.controller  # type: ignore
 
-    # ------------------------------ Sidebar -------------------------------- #
+    # ---------------- Sidebar controls --------------- #
     st.sidebar.header("Connection")
 
     mode = st.sidebar.radio("Mode", ["Real Device (RS‑232)", "Simulation"])
-
     poll_int = st.sidebar.slider("Poll interval (s)", 0.2, 2.0, 0.5, 0.1)
 
+    # ---- Detect mode change -> stop & clear ---- #
+    if mode != st.session_state.mode:
+        ctrl.stop()
+        _reset_data()
+        st.session_state.mode = mode
+
     if mode.startswith("Real"):
-        port = st.sidebar.selectbox(
-            "Serial port", _discover_ports(), help="Detected COM/tty ports"
-        )
+        port = st.sidebar.selectbox("Serial port", _discover_ports())
         baud = st.sidebar.selectbox(
-            "Baud rate", [4800, 9600, 19200, 38400, 57600, 115200], index=1
+            "Baud rate",
+            [4800, 9600, 19200, 38400, 57600, 115200],
+            index=1,
         )
         address = st.sidebar.number_input(
-            "Device address", min_value=1, max_value=253, value=253
-        )  # 253 is factory default :contentReference[oaicite:2]{index=2}
+            "Device address", 1, 253, value=253
+        )  # 253 = factory default
         if st.sidebar.button("Connect"):
             ctrl.start_real(port, baudrate=baud, address=address, poll=poll_int)
-    else:
+    else:  # Simulation
         if st.sidebar.button("Start Simulation"):
             ctrl.start_simulated(poll=poll_int)
 
     if st.sidebar.button("Stop"):
         ctrl.stop()
+        _reset_data()
 
     st.sidebar.write("---")
-    st.sidebar.markdown("CSV logs are saved in the **`logs/`** folder.")
+    st.sidebar.markdown("Logs saved in **`logs/`** folder.")
 
-    # ------------------------------ Main area ------------------------------ #
-    # Drain any queued measurements **every rerun** and append to DF
-    if ctrl.queue:
-        _drain_queue(ctrl)
+    # -------------------- Error banner ---------------- #
+    if st.session_state.error_msg:
+        with st.container():
+            st.error(st.session_state.error_msg)
+            if st.button("Dismiss error 🗙", key="dismiss_err"):
+                st.session_state.error_msg = ""
 
+    # ------------------ Main dashboard ---------------- #
+    _drain_queue(ctrl)
     df: pd.DataFrame = st.session_state.data
 
     col_metric_p, col_metric_t = st.columns(2)
     col_chart_p, col_chart_t = st.columns(2)
 
-    # ---- Current values (metrics) ---- #
+    # Metrics
     if not df.empty:
         col_metric_p.metric(
-            "Current Pressure (mbar)", f"{df['pressure'].iloc[-1]:.3e}"
+            "Current Pressure (mbar)", f"{df.pressure.iloc[-1]:.3e}"
         )
         col_metric_t.metric(
-            "Current Temperature (°C)", f"{df['temperature'].iloc[-1]:.2f}"
+            "Current Temperature (°C)", f"{df.temperature.iloc[-1]:.2f}"
         )
     else:
-        col_metric_p.metric("Current Pressure (mbar)", "N/A")
-        col_metric_t.metric("Current Temperature (°C)", "N/A")
+        col_metric_p.metric("Current Pressure (mbar)", "—")
+        col_metric_t.metric("Current Temperature (°C)", "—")
 
-    # ---- Live plots ---- #
+    # Charts
     with col_chart_p:
         st.subheader("Pressure vs. Time")
         st.line_chart(
-            df.set_index("timestamp")["pressure"] if not df.empty else pd.Series(dtype=float)
+            df.set_index("timestamp")["pressure"]
+            if not df.empty
+            else pd.Series(dtype=float)
         )
-
     with col_chart_t:
         st.subheader("Temperature vs. Time")
         st.line_chart(
-            df.set_index("timestamp")["temperature"] if not df.empty else pd.Series(dtype=float)
+            df.set_index("timestamp")["temperature"]
+            if not df.empty
+            else pd.Series(dtype=float)
         )
 
-    # --------------------------- Auto‑refresh logic ------------------------ #
-    # Streamlit re‑executes the script from top on every user interaction.
-    # To keep charts live without blocking, schedule a lightweight rerun.
-    if ctrl.queue.qsize() or ctrl._model:  # type: ignore (polling active?)
-        time.sleep(0.2)  # small pause to avoid hammering the event loop
-        st.rerun()
+    # --------------- Auto‑refresh tick --------------- #
+    if ctrl.queue.qsize() or getattr(ctrl, "_model", None):
+        time.sleep(0.2)
+        # streamlit 1.4 has experimental_rerun; >=1.29 has rerun
+        (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()

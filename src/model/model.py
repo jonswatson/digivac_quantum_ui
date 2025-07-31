@@ -17,13 +17,18 @@ class MeasurementModel:
     Owns the device instance, polling thread, and CSV logger.
     """
 
-    def __init__(self, device: BaseDevice, poll_interval: float = 0.5) -> None:
+    def __init__(
+        self,
+        device: BaseDevice,
+        poll_interval: float = 0.5,
+        log_prefix: str = "real",
+    ) -> None:
         self.device = device
         self.poll_interval = poll_interval
         self._callbacks: list[_CALLBACK] = []
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        self.logger = CsvLogger()
+        self.logger = CsvLogger(prefix=log_prefix)
 
     # -------- Public API -------- #
 
@@ -49,7 +54,13 @@ class MeasurementModel:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            data = self.device.query()  # {'pressure': …, 'temperature': …}
+            try:
+                data = self.device.query()
+            except Exception as ex:
+                for cb in self._callbacks:
+                    cb({"error": f"{type(ex).__name__}: {ex}"})
+                break  # terminate polling thread
+
             for cb in self._callbacks:
                 cb(data)
             # Persist to disk

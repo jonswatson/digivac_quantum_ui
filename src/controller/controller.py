@@ -34,11 +34,11 @@ class Controller:
         poll: float = 0.5,
     ) -> None:
         device = RS232Device(port=port, baudrate=baudrate, address=address)
-        self._start_model(device, poll)
+        self._start_model(device, poll, log_prefix="real")
 
     def start_simulated(self, poll: float = 0.5) -> None:
         device = SimulatedDevice()
-        self._start_model(device, poll)
+        self._start_model(device, poll, log_prefix="sim")
 
     def stop(self) -> None:
         if self._model:
@@ -52,9 +52,11 @@ class Controller:
 
     # -------- Private helpers -------- #
 
-    def _start_model(self, device, poll) -> None:
+    def _start_model(self, device, poll, log_prefix: str) -> None:
         if self._model:
             self.stop()
-        self._model = MeasurementModel(device, poll_interval=poll)
+        self._model = MeasurementModel(
+            device, poll_interval=poll, log_prefix=log_prefix
+        )        
         self._model.subscribe(self._queue.put)
         self._model.start()
