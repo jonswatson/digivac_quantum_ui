@@ -8,7 +8,7 @@ from time import sleep
 from typing import Optional
 from .base import BaseDevice, DeviceError
 
-_TERMINATOR = "\r\n"  # DigiVac default
+_TERMINATOR = "\\r\n"  # DigiVac default
 _POLL_DELAY = 0.05    # seconds between command & response
 
 class RS232Device(BaseDevice):
@@ -62,8 +62,14 @@ class RS232Device(BaseDevice):
         )
 
     def disconnect(self) -> None:
-        if self._ser and self._ser.is_open:
-            self._ser.close()
+        if self._ser:
+            if self._ser.is_open:
+                try:
+                    self._ser.close()
+                except (OSError, serial.SerialException):
+                    # Port was yanked (USB unplug / power-cycle) – ignore.
+                    pass
+            self._ser = None
 
     def is_connected(self) -> bool:
         return self._ser is not None and self._ser.is_open
@@ -74,25 +80,45 @@ class RS232Device(BaseDevice):
         Intended for advanced/diagnostic use.
         """
         self._write(cmd)
+        print (f"Sent: {cmd}")
         sleep(_POLL_DELAY)
         return self._readline()
 
     # --- High‑level measurement helpers --- #
 
+# --- High-level measurement helpers --- #
+
+    def _clean_response(self, line: str) -> str:
+        """
+        Trim '@<addr>' prefix *and* trailing '\' if present,
+        then return the piece that starts with 'ACK'.
+        """
+        line = line.rstrip("\\")            # remove terminator back-slash
+        if line.startswith("@"):
+            # remove '@' + decimal digits
+            i = 1
+            while i < len(line) and line[i].isdigit():
+                i += 1
+            line = line[i:]
+        return line
+
     def _query_numeric(self, mnemonic: str) -> float:
         """
-        Send `@addr<mnemonic>?` and parse `ACK<value>` payload.
+        Send `@addr<MN>?` and parse `ACK<value>` (with or without @addr prefix).
         """
-        raw = self._format(f"{mnemonic}?")
-        self._write(raw)
+        raw_cmd = self._format(f"{mnemonic}?")
+        self._write(raw_cmd)
         sleep(_POLL_DELAY)
-        response = self._readline()
-        if not response.startswith("ACK"):
-            raise DeviceError(f"Unexpected response: {response}")
+        resp = self._clean_response(self._readline())
+
+        if not resp.startswith("ACK"):
+            raise DeviceError(f"Unexpected response: {resp}")
+
         try:
-            return float(response[3:])
+            return float(resp[3:])           # handles 7.4601E+02 just fine
         except ValueError as ex:
-            raise DeviceError(f"Malformed numeric value: {response}") from ex
+            raise DeviceError(f"Bad numeric value: {resp}") from ex
+
 
     def read_pressure(self) -> float:
         return self._query_numeric("P")

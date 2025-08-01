@@ -43,6 +43,7 @@ class Controller:
     def stop(self) -> None:
         if self._model:
             self._model.stop()
+            self._model = None
 
     # -------- Public getters -------- #
 
