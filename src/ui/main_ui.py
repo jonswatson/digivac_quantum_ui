@@ -85,6 +85,17 @@ def render() -> None:
         help="Select the pressure unit for both UI display and log files.",
     )
 
+    # Detect dropdown change AFTER a connection is active
+    if "current_unit" not in st.session_state:
+        st.session_state.current_unit = unit
+    if ctrl.queue.qsize() and unit != st.session_state.current_unit:
+        # clear DF & charts
+        st.session_state.data = pd.DataFrame(
+            columns=["timestamp", "pressure", "temperature"]
+        )
+        ctrl.change_unit(unit, poll_int)
+        st.session_state.current_unit = unit
+
     # ---- Detect mode change -> stop & clear ---- #
     if mode != st.session_state.mode:
         ctrl.stop()
@@ -102,12 +113,11 @@ def render() -> None:
             "Device address", 1, 253, value=253
         )  # 253 = factory default
         if st.sidebar.button("Connect"):
-            ctrl.start_real(port, baudrate=baud, address=address, poll=poll_int)
-            ctrl.set_unit(unit)
+            ctrl.start_real(port, baudrate=baud, address=address, poll=poll_int, unit=unit)
+
     else:  # Simulation
         if st.sidebar.button("Start Simulation"):
-            ctrl.start_simulated(poll=poll_int)
-            ctrl.set_unit(unit)
+            ctrl.start_simulated(poll=poll_int, unit=unit)
 
     if st.sidebar.button("Stop"):
         ctrl.stop()
@@ -133,7 +143,7 @@ def render() -> None:
     # Metrics
     if not df.empty:
         col_metric_p.metric(
-            "Current Pressure (mbar)", f"{df.pressure.iloc[-1]:.3e}"
+            f"Current Pressure ({unit})", f"{df.pressure.iloc[-1]:.3e}"
         )
         col_metric_t.metric(
             "Current Temperature (°C)", f"{df.temperature.iloc[-1]:.2f}"

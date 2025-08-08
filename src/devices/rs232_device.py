@@ -41,7 +41,9 @@ class RS232Device(BaseDevice):
     def _write(self, msg: str) -> None:
         if not self._ser:
             raise DeviceError("Serial port not open.")
-        self._ser.write(msg.encode("ascii"))
+        with self._lock:
+            self._ser.write(msg.encode("ascii"))
+            self._ser.flush()
 
     def _readline(self) -> str:
         if not self._ser:
@@ -81,10 +83,11 @@ class RS232Device(BaseDevice):
         Send raw (already formatted) command and return raw response.
         Intended for advanced/diagnostic use.
         """
-        with self._lock:
-            self._write(cmd)
-            sleep(_POLL_DELAY)
-            return self._readline()
+        if self._ser:
+            self._ser.reset_input_buffer()
+        self._write(cmd)
+        sleep(_POLL_DELAY)
+        return self._readline()
 
     # --- High‑level measurement helpers --- #
 
@@ -130,20 +133,66 @@ class RS232Device(BaseDevice):
 
     def set_pressure_unit(self, unit: str) -> None:
         """
-        Change the gauge’s pressure unit. 
-        unit: one of 'mbar', 'torr', 'pascal' (case-insensitive).
+        Ensure the gauge is in the requested pressure unit.
+
+        unit: 'mbar', 'torr', or 'pascal'  (case-insensitive).
+
+        Strategy
+        --------
+        1. If already in that unit → return.
+        2. Send U!P,<UNIT>\ .
+           • Firmware may reply ACK<UNIT>
+           • Older builds sometimes send *nothing* or echo a pressure line first.
+        3. After write, re-query the unit; if it now matches, treat as success.
+           Otherwise raise DeviceError.
         """
-        cmd = self._format(f"U!P,{unit.upper()}")
-        resp = self.send_command(cmd)
-        if not resp.startswith("ACK"):
-            raise DeviceError(f"Failed to set pressure unit: {resp}")
+        target = unit.upper()
+
+        # 1. Skip if already correct
+        try:
+            if self.get_pressure_unit() == target:
+                return
+        except DeviceError:
+            # ignore transient query failure; we'll verify after write
+            pass
+
+        cmd = self._format(f"U!P,{target}")
+
+        # 2. Write command
+        self._write(cmd)
+        sleep(0.25)            # give firmware ample time
+
+        # 3. Drain up to two reply lines (ignore content)
+        for _ in range(2):
+            try:
+                _ = self._readline()
+            except DeviceError:
+                break          # no more data
+
+        # 4. Verify by querying
+        try:
+            if self.get_pressure_unit() != target:
+                raise DeviceError(
+                    f"Device on port {self.port}: Gauge did not switch to {target}"
+                )
+        except DeviceError as ex:
+            # propagate with port info
+            raise DeviceError(
+                f"Device on port {self.port}: {ex}"
+            ) from ex
+
 
     def get_pressure_unit(self) -> str:
         """
-        Query the current pressure unit. Returns 'MBAR', 'TORR', or 'PASCAL'.
+        Query current pressure unit.
+        Returns 'MBAR', 'TORR', or 'PASCAL'.
+        Accepts replies that include the @<addr> prefix.
         """
         cmd = self._format("U?P")
-        resp = self.send_command(cmd)
+        resp = self.send_command(cmd)            # e.g. '@253ACKMBAR\\'
+        resp = self._clean_response(resp)        # <-- strip @addr + trailing '\'
+
         if not resp.startswith("ACK"):
             raise DeviceError(f"Failed to query pressure unit: {resp}")
-        return resp[3:].strip()
+
+        return resp[3:].strip().upper()
