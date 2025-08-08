@@ -1,0 +1,9 @@
+# Ignore all files in the log folder, but not the folder itself
+log/*
+
+# Do not ignore the log folder itself
+!log/
+
+# Ignore Python cache directories
+__pycache__/
+*/__pycache__/

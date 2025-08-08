@@ -15,15 +15,18 @@ class CsvLogger:
     Filename prefix indicates 'real' or 'sim'.
     """
 
-    def __init__(self, prefix: str, directory: str | Path = "logs") -> None:
+    def __init__(self, prefix: str, unit: str, directory: str | Path = "logs") -> None:
         self._base_dir = Path(directory)
         self._base_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        self._file_path = self._base_dir / f"{prefix}_measurements_{timestamp}.csv"
+        # include unit in the filename
+        self._file_path = self._base_dir / f"{prefix}_{unit}_measurements_{timestamp}.csv"
 
         with self._file_path.open("w", newline="") as f:
-            csv.writer(f).writerow(
-                ["timestamp_utc", "pressure", "temperature", "setpoint_status"]
+            writer = csv.writer(f)
+            # include unit as a column
+            writer.writerow(
+                ["timestamp_utc", "unit", "pressure", "temperature", "setpoint_status"]
             )
 
     @property
