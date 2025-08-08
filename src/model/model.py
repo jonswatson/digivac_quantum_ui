@@ -20,7 +20,7 @@ class MeasurementModel:
     def __init__(
         self,
         device: BaseDevice,
-        poll_interval: float = 0.15,
+        poll_interval: float = 0.5,
         log_prefix: str = "real",
         unit: str = "mbar",
     ) -> None:

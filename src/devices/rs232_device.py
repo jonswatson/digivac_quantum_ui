@@ -4,6 +4,7 @@ RS‑232 implementation for the DigiVac Quantum DPP series.
 
 from __future__ import annotations
 import serial
+import threading
 from time import sleep
 from typing import Optional
 from .base import BaseDevice, DeviceError
@@ -29,6 +30,7 @@ class RS232Device(BaseDevice):
         self.address = address
         self.timeout = timeout
         self._ser: Optional[serial.Serial] = None
+        self._lock = threading.Lock()
 
     # ---------- Private helpers ---------- #
 
@@ -79,10 +81,10 @@ class RS232Device(BaseDevice):
         Send raw (already formatted) command and return raw response.
         Intended for advanced/diagnostic use.
         """
-        self._write(cmd)
-        print (f"Sent: {cmd}")
-        sleep(_POLL_DELAY)
-        return self._readline()
+        with self._lock:
+            self._write(cmd)
+            sleep(_POLL_DELAY)
+            return self._readline()
 
     # --- High‑level measurement helpers --- #
 
