@@ -34,16 +34,33 @@ class Controller:
         poll: float = 0.5,
     ) -> None:
         device = RS232Device(port=port, baudrate=baudrate, address=address)
+        self._pending_unit = None
         self._start_model(device, poll, log_prefix="real")
 
     def start_simulated(self, poll: float = 0.5) -> None:
         device = SimulatedDevice()
+        self._pending_unit = None
         self._start_model(device, poll, log_prefix="sim")
 
     def stop(self) -> None:
         if self._model:
             self._model.stop()
             self._model = None
+
+    def set_unit(self, unit: str) -> None:
+        """
+        Apply a pressure-unit change to the active model/device.
+        Must be called after start_real or start_simulated.
+        """
+        # store for passing into a new model on connect
+        self._pending_unit = unit
+        # if already running, apply directly to device and logger
+        if self._model:
+            # tell the hardware
+            if hasattr(self._model.device, "set_pressure_unit"):
+                self._model.device.set_pressure_unit(unit)
+            # recreate the logger with new unit (optional: you could reopen a new file)
+            self._model.logger = CsvLogger(prefix="real" if isinstance(self._model.device, RS232Device) else "sim", unit=unit)
 
     # -------- Public getters -------- #
 

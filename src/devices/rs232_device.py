@@ -125,3 +125,23 @@ class RS232Device(BaseDevice):
 
     def read_temperature(self) -> float:
         return self._query_numeric("T")
+
+    def set_pressure_unit(self, unit: str) -> None:
+        """
+        Change the gauge’s pressure unit. 
+        unit: one of 'mbar', 'torr', 'pascal' (case-insensitive).
+        """
+        cmd = self._format(f"U!P,{unit.upper()}")
+        resp = self.send_command(cmd)
+        if not resp.startswith("ACK"):
+            raise DeviceError(f"Failed to set pressure unit: {resp}")
+
+    def get_pressure_unit(self) -> str:
+        """
+        Query the current pressure unit. Returns 'MBAR', 'TORR', or 'PASCAL'.
+        """
+        cmd = self._format("U?P")
+        resp = self.send_command(cmd)
+        if not resp.startswith("ACK"):
+            raise DeviceError(f"Failed to query pressure unit: {resp}")
+        return resp[3:].strip()

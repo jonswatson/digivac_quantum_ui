@@ -76,7 +76,14 @@ def render() -> None:
     st.sidebar.header("Connection")
 
     mode = st.sidebar.radio("Mode", ["Real Device (RS‑232)", "Simulation"])
-    poll_int = st.sidebar.slider("Poll interval (s)", 0.2, 2.0, 0.5, 0.1)
+    poll_int = st.sidebar.slider("Poll interval (s)", 0.1, 2.0, 0.5, 0.1)
+
+    unit = st.sidebar.selectbox(
+        "Pressure unit",
+        ["mbar", "torr", "pascal"],
+        index=1,  # default = 'torr'
+        help="Select the pressure unit for both UI display and log files.",
+    )
 
     # ---- Detect mode change -> stop & clear ---- #
     if mode != st.session_state.mode:
@@ -96,9 +103,11 @@ def render() -> None:
         )  # 253 = factory default
         if st.sidebar.button("Connect"):
             ctrl.start_real(port, baudrate=baud, address=address, poll=poll_int)
+            ctrl.set_unit(unit)
     else:  # Simulation
         if st.sidebar.button("Start Simulation"):
             ctrl.start_simulated(poll=poll_int)
+            ctrl.set_unit(unit)
 
     if st.sidebar.button("Stop"):
         ctrl.stop()
