@@ -56,14 +56,19 @@ class RS232Device(BaseDevice):
     # ---------- Public API ---------- #
 
     def connect(self) -> None:
-        self._ser = serial.Serial(
-            port=self.port,
-            baudrate=self.baudrate,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=self.timeout,
-        )
+        try:
+            self._ser = serial.Serial(
+                self.port, self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=self.timeout,
+            )
+        except SerialException as e:
+            raise DeviceError(
+                f"Could not open {self.port}: {e}. "
+                "Is the port busy or do you need permissions?"
+            ) from e
 
     def disconnect(self) -> None:
         if self._ser:
